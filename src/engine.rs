@@ -1,7 +1,10 @@
-use parse;
+use crate::parse;
+use send_wrapper::SendWrapper;
 use std::cmp::PartialEq;
-use std::collections::HashMap;
-use std::ops::{Add, Sub, Mul, Div};
+use std::{
+    collections::HashMap,
+    ops::{Add, Div, Mul, Sub},
+};
 
 //TODO: dialogue options inside conditionals
 
@@ -94,10 +97,10 @@ pub(crate) enum Term {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct Node {
+pub struct Node {
     pub title: NodeName,
     pub extra: HashMap<String, String>,
-    pub steps: Vec<Step>,
+    pub(crate) steps: Vec<Step>,
     pub visited: bool,
 }
 
@@ -132,21 +135,14 @@ enum StepIndex {
 impl StepIndex {
     fn advance(&mut self) {
         let idx = match *self {
-            StepIndex::Dialogue(_, ref mut idx) |
-            StepIndex::If(ref mut idx) |
-            StepIndex::ElseIf(_, ref mut idx) |
-            StepIndex::Else(ref mut idx) => idx,
+            StepIndex::Dialogue(_, ref mut idx)
+            | StepIndex::If(ref mut idx)
+            | StepIndex::ElseIf(_, ref mut idx)
+            | StepIndex::Else(ref mut idx) => idx,
         };
         *idx += 1;
     }
 }
-
-#[derive(PartialEq)]
-enum ExecutionStatus {
-    Continue,
-    Halt,
-}
-
 /// A primitive value .
 #[derive(Clone)]
 pub enum Value {
@@ -175,16 +171,11 @@ impl Add for Value {
     type Output = Value;
     fn add(self, other: Value) -> Value {
         match (self, other) {
-            (Value::String(s1), v) =>
-                Value::String(format!("{}{}", s1, v.as_string())),
-            (v, Value::String(s2)) =>
-                Value::String(format!("{}{}", v.as_string(), s2)),
-            (Value::Number(f1), v) =>
-                Value::Number(f1 + v.as_num()),
-            (v, Value::Number(f2)) =>
-                Value::Number(v.as_num() + f2),
-            (v1, v2) =>
-                Value::Number(v1.as_num() + v2.as_num()),
+            (Value::String(s1), v) => Value::String(format!("{}{}", s1, v.as_string())),
+            (v, Value::String(s2)) => Value::String(format!("{}{}", v.as_string(), s2)),
+            (Value::Number(f1), v) => Value::Number(f1 + v.as_num()),
+            (v, Value::Number(f2)) => Value::Number(v.as_num() + f2),
+            (v1, v2) => Value::Number(v1.as_num() + v2.as_num()),
         }
     }
 }
@@ -243,17 +234,17 @@ impl Value {
 
 struct Function {
     num_args: usize,
-    callback: Box<FunctionCallback>,
+    callback: SendWrapper<Box<FunctionCallback>>,
 }
 
 /// A closure that will be invoked when a particular function is called in a Yarn expression.
-pub type FunctionCallback = Fn(Vec<Value>, &Nodes) -> Result<Value, ()>;
+pub type FunctionCallback = dyn Fn(Vec<Value>, &Nodes) -> Result<Value, ()>;
 
 /// The engine that stores all conversation-related state.
 pub struct YarnEngine {
-    handler: Box<YarnHandler>,
     state: NodeState,
     engine_state: EngineState,
+    conversion_ended: bool,
 }
 
 struct EngineState {
@@ -268,9 +259,7 @@ impl EngineState {
             Expr::Term(Term::Number(f)) => Ok(Value::Number(*f)),
             Expr::Term(Term::Boolean(b)) => Ok(Value::Boolean(*b)),
             Expr::Term(Term::String(ref s)) => Ok(Value::String((*s).clone())),
-            Expr::Term(Term::Variable(ref n)) => {
-                self.variables.0.get(n).cloned().ok_or(())
-            }
+            Expr::Term(Term::Variable(ref n)) => self.variables.0.get(n).cloned().ok_or(()),
             Expr::Term(Term::Function(ref name, ref args)) => {
                 let mut eval_args = vec![];
                 for arg in args {
@@ -284,10 +273,12 @@ impl EngineState {
                 (f.callback)(eval_args, state)
             }
 
-            Expr::Unary(UnaryOp::Not, expr) =>
-                self.evaluate(expr, state).map(|v| Value::Boolean(!v.as_bool())),
-            Expr::Unary(UnaryOp::Negate, expr) =>
-                self.evaluate(expr, state).map(|v| Value::Number(-v.as_num())),
+            Expr::Unary(UnaryOp::Not, expr) => self
+                .evaluate(expr, state)
+                .map(|v| Value::Boolean(!v.as_bool())),
+            Expr::Unary(UnaryOp::Negate, expr) => self
+                .evaluate(expr, state)
+                .map(|v| Value::Number(-v.as_num())),
 
             Expr::Binary(BinaryOp::And, left, right) => {
                 let left = self.evaluate(left, state)?.as_bool();
@@ -357,7 +348,7 @@ impl EngineState {
 }
 
 /// A collection of Yarn nodes.
-pub struct Nodes(HashMap<NodeName, Node>);
+pub struct Nodes(pub HashMap<NodeName, Node>);
 
 struct NodeState {
     nodes: Nodes,
@@ -392,7 +383,10 @@ impl NodeState {
                     steps = if_steps;
                     current_step_index = step_index;
                 }
-                (&Step::Conditional(_, _, ref else_ifs, ..), StepIndex::ElseIf(index, step_index)) => {
+                (
+                    &Step::Conditional(_, _, ref else_ifs, ..),
+                    StepIndex::ElseIf(index, step_index),
+                ) => {
                     steps = &else_ifs[index].1;
                     current_step_index = step_index;
                 }
@@ -410,7 +404,7 @@ impl NodeState {
 
 impl YarnEngine {
     /// Create a new YarnEngine instance associated with the given handler.
-    pub fn new(handler: Box<YarnHandler>) -> YarnEngine {
+    pub fn new() -> Self {
         let mut engine = YarnEngine {
             state: NodeState {
                 nodes: Nodes(HashMap::new()),
@@ -420,21 +414,23 @@ impl YarnEngine {
                 variables: Variables(HashMap::new()),
                 functions: HashMap::new(),
             },
-            handler,
+            conversion_ended: false,
+            // handler,
         };
 
         // Define built-in functions.
-        engine.register_function("visited".to_string(), 1, Box::new(|args, state| {
-            match args[0] {
-                Value::String(ref s) => {
-                        state
-                        .0
-                        .get(&NodeName(s.to_string()))
-                        .map(|node| Value::Boolean(node.visited)).ok_or(())
-                }
-                _ => return Err(())
-            }
-        }));
+        engine.register_function(
+            "visited".to_string(),
+            1,
+            Box::new(|args, state| match args[0] {
+                Value::String(ref s) => state
+                    .0
+                    .get(&NodeName(s.to_string()))
+                    .map(|node| Value::Boolean(node.visited))
+                    .ok_or(()),
+                _ => return Err(()),
+            }),
+        );
 
         engine
     }
@@ -456,27 +452,24 @@ impl YarnEngine {
         num_args: usize,
         callback: Box<FunctionCallback>,
     ) {
-        self.engine_state.functions.insert(name, Function {
-            num_args,
-            callback,
-        });
+        self.engine_state.functions.insert(
+            name,
+            Function {
+                num_args,
+                callback: SendWrapper::new(callback),
+            },
+        );
     }
-
     /// Set a given variable to the provided value. Any Yarn expressions evaluated
     /// after this call will observe the new value when using the variable.
-    pub fn set_variable(
-        &mut self,
-        name: VariableName,
-        value: Value
-    ) {
+    pub fn set_variable(&mut self, name: VariableName, value: Value) {
         self.engine_state.variables.set(name, value);
     }
 
     /// Begin evaluating the provided Yarn node.
     pub fn activate(&mut self, node: NodeName) {
-        //TODO: mark visited
         self.state.conversation = Some(Conversation::new(node));
-        self.proceed();
+        self.conversion_ended = false;
     }
 
     /// Make a choice between a series of options for the current Yarn node's active step.
@@ -486,118 +479,145 @@ impl YarnEngine {
             let mut conversation = self.state.take_conversation();
             let (steps, current_step_index) = self.state.get_current_step(&conversation);
             match steps[current_step_index] {
-                Step::Dialogue(_, ref choices) => {
-                    match choices[choice].kind {
-                        ChoiceKind::External(ref node) => conversation.reset((*node).clone()),
-                        ChoiceKind::Inline(..) => {
-                            conversation.indexes.push(StepIndex::Dialogue(choice, 0));
-                        }
+                Step::Dialogue(_, ref choices) => match choices[choice].kind {
+                    ChoiceKind::External(ref node) => conversation.reset((*node).clone()),
+                    ChoiceKind::Inline(..) => {
+                        conversation.indexes.push(StepIndex::Dialogue(choice, 0));
                     }
+                },
+                Step::Command(..) | Step::Assign(..) | Step::Conditional(..) | Step::Jump(..) => {
+                    unreachable!()
                 }
-                Step::Command(..) | Step::Assign(..) | Step::Conditional(..) | Step::Jump(..) =>
-                    unreachable!(),
             }
             conversation
         };
         self.state.conversation = Some(conversation);
-        self.proceed();
-    }
-
-    /// Resume execution of the current Yarn node.
-    pub fn proceed(&mut self) {
-        while self.proceed_one_step() == ExecutionStatus::Continue {
-        }
-    }
-
-    fn do_proceed_one_step(&mut self) -> (Conversation, ExecutionStatus) {
-        let mut conversation = self.state.take_conversation();
-        let (steps, current_step_index) = self.state.get_current_step(&conversation);
-
-        if current_step_index >= steps.len() {
-            self.handler.end_conversation();
-            return (conversation, ExecutionStatus::Halt);
-        }
-
-        let (advance, execution_status) = match steps[current_step_index] {
-            Step::Dialogue(ref text, ref choices) => {
-                if choices.is_empty() {
-                    self.handler.say(text.clone());
-                    (true, ExecutionStatus::Halt)
-                } else {
-                    //TODO: conditional options
-                    self.handler.choose(text.clone(), choices.iter().map(|c| c.text.clone()).collect());
-                    (false, ExecutionStatus::Halt)
-                }
-            }
-            Step::Command(ref command) => {
-                self.handler.command(command.clone()).unwrap();
-                (true, ExecutionStatus::Continue)
-            }
-            Step::Assign(ref name, ref expr) => {
-                let value = self.engine_state.evaluate(expr, &self.state.nodes).unwrap();
-                self.engine_state.variables.set((*name).clone(), value);
-                (true, ExecutionStatus::Continue)
-            }
-            Step::Conditional(ref expr, ref _if_steps, ref else_ifs, ref _else_steps) => {
-                let value = self.engine_state.evaluate(expr, &self.state.nodes).unwrap();
-                if value.as_bool() {
-                    conversation.indexes.push(StepIndex::If(0));
-                } else {
-                    let mut matched = false;
-                    for (else_if_index, else_ifs) in else_ifs.iter().enumerate() {
-                        let value = self.engine_state.evaluate(&else_ifs.0, &self.state.nodes).unwrap();
-                        if value.as_bool() {
-                            conversation.indexes.push(StepIndex::ElseIf(else_if_index, 0));
-                            matched = true;
-                            break;
-                        }
-                    }
-                    if !matched {
-                        conversation.indexes.push(StepIndex::Else(0));
-                    }
-                }
-                (false, ExecutionStatus::Continue)
-            }
-            Step::Jump(ref name) => {
-                //TODO: mark visited
-                conversation.reset((*name).clone());
-                (false, ExecutionStatus::Continue)
-            }
-        };
-
-        if advance {
-            match conversation.indexes.last_mut() {
-                Some(index) => index.advance(),
-                None => conversation.base_index += 1,
-            }
-        }
-
-        (conversation, execution_status)
-    }
-
-    fn proceed_one_step(&mut self) -> ExecutionStatus {
-        let (conversation, execution_status) = self.do_proceed_one_step();
-
-        self.state.conversation = Some(conversation);
-
-        execution_status
     }
 }
 
 /// A handler for Yarn actions that require integration with the embedder.
 /// Invoked synchronously during Yarn execution when matching steps are
 /// evaluated.
-pub trait YarnHandler {
+// pub trait YarnHandler {
+//     type Data;
+
+//     fn say(&mut self, text: String, data: Option<&mut Self::Data>);
+
+//     fn choose(&mut self, text: String, choices: Vec<String>, data: Option<&mut Self::Data>);
+
+//     fn command(&mut self, action: String, data: Option<&mut Self::Data>) -> Result<(), ()>;
+
+//     fn end_conversation(&mut self, data: Option<&mut Self::Data>);
+// }
+
+#[derive(Eq, PartialEq, Debug)]
+pub enum YarnEntry {
     /// Present a line of dialogue without any choices. Execution will not
     /// resume until `YarnEngine::proceed` is invoked.
-    fn say(&mut self, text: String);
+    Say(String),
     /// Present a line of dialogue with subsequent choices. Execution will not
     /// resume until `YarnEngine::choose` is invoked.
-    fn choose(&mut self, text: String, choices: Vec<String>);
+    Choose { text: String, choices: Vec<String> },
     /// Instruct the embedder to perform some kind of action. The given action
     /// string is passed unmodified from the node source.
-    fn command(&mut self, action: String) -> Result<(), ()>;
+    Command { action: String },
     /// End the current conversation. Execution will not resume until a new
     /// node is made active with `YarnEngine::activate`.
-    fn end_conversation(&mut self);
+    EndConversation,
+}
+
+impl<'a> Iterator for YarnEngine {
+    type Item = YarnEntry;
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.state.conversation.is_none() {
+                return None;
+            }
+            let mut conversation = self.state.take_conversation();
+            let (steps, current_step_index) = self.state.get_current_step(&conversation);
+
+            if self.conversion_ended {
+                return None;
+            } else if current_step_index >= steps.len() {
+                self.conversion_ended = true;
+                return Some(YarnEntry::EndConversation);
+            }
+
+            let advance = |conversation: &mut Conversation| match conversation.indexes.last_mut() {
+                Some(index) => index.advance(),
+                None => conversation.base_index += 1,
+            };
+            if current_step_index >= steps.len() {
+                return None;
+            }
+
+            let result = match steps[current_step_index] {
+                Step::Dialogue(ref text, ref choices) => {
+                    if choices.is_empty() {
+                        advance(&mut conversation);
+                        // (true, ExecutionStatus::Halt)
+                        (false, Some(YarnEntry::Say(text.clone())))
+                    } else {
+                        (
+                            false,
+                            Some(YarnEntry::Choose {
+                                text: text.clone(),
+                                choices: choices.iter().map(|c| c.text.clone()).collect(),
+                            }),
+                        )
+                    }
+                }
+                Step::Command(ref command) => {
+                    advance(&mut conversation);
+                    (
+                        false,
+                        Some(YarnEntry::Command {
+                            action: command.clone(),
+                        }),
+                    )
+                }
+                Step::Assign(ref name, ref expr) => {
+                    let value = self.engine_state.evaluate(expr, &self.state.nodes).unwrap();
+                    self.engine_state.variables.set((*name).clone(), value);
+                    advance(&mut conversation);
+                    (true, None)
+                }
+                Step::Jump(ref name) => {
+                    conversation.reset((*name).clone());
+                    (true, None)
+                }
+                Step::Conditional(ref expr, ref _if_steps, ref else_ifs, ref _else_steps) => {
+                    let value = self.engine_state.evaluate(expr, &self.state.nodes).unwrap();
+                    if value.as_bool() {
+                        conversation.indexes.push(StepIndex::If(0));
+                    } else {
+                        let mut matched = false;
+                        for (else_if_index, else_ifs) in else_ifs.iter().enumerate() {
+                            let value = self
+                                .engine_state
+                                .evaluate(&else_ifs.0, &self.state.nodes)
+                                .unwrap();
+                            if value.as_bool() {
+                                conversation
+                                    .indexes
+                                    .push(StepIndex::ElseIf(else_if_index, 0));
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if !matched {
+                            conversation.indexes.push(StepIndex::Else(0));
+                        }
+                    }
+                    (true, None)
+                }
+            };
+
+            self.state.conversation = Some(conversation);
+
+            if !result.0 {
+                return result.1;
+            }
+        }
+    }
 }

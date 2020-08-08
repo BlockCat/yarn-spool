@@ -1,10 +1,10 @@
-use std::cell::RefCell;
+use crate::engine::{BinaryOp, Choice, Expr, Node, NodeName, Step, Term, UnaryOp, VariableName};
+use crate::engine::{Value, YarnEngine, YarnEntry};
+use crate::parse::{
+    parse_expr, parse_line, parse_node, parse_node_contents, parse_nodes, parse_step,
+};
+use crate::parse::{Line, Token, TokenIterator};
 use std::collections::HashMap;
-use std::rc::Rc;
-use engine::{Expr, Term, UnaryOp, BinaryOp, VariableName, NodeName, Node, Choice, Step};
-use engine::{YarnEngine, YarnHandler, Value};
-use parse::{TokenIterator, Token, Line};
-use parse::{parse_step, parse_node_contents, parse_node, parse_nodes, parse_expr, parse_line};
 
 #[test]
 fn tokenize_number() {
@@ -88,29 +88,40 @@ fn parse_dialogue_with_option() {
     let input = "this is dialogue\n[[this is a choice|targetnode]]";
     let mut t = TokenIterator::new(input);
     let step = parse_step(&mut t).unwrap();
-    assert_eq!(step, Step::Dialogue("this is dialogue".to_string(),
-                                    vec![
-                                        Choice::external("this is a choice".to_string(),
-                                                         NodeName("targetnode".to_string())),
-                                    ]));
+    assert_eq!(
+        step,
+        Step::Dialogue(
+            "this is dialogue".to_string(),
+            vec![Choice::external(
+                "this is a choice".to_string(),
+                NodeName("targetnode".to_string())
+            ),]
+        )
+    );
 }
 
 #[test]
 fn parse_dialogue_with_two_options() {
-    let input = "this is dialogue\n[[this is a choice|targetnode]]\n[[this is another choice|targetnode2]]";
+    let input =
+        "this is dialogue\n[[this is a choice|targetnode]]\n[[this is another choice|targetnode2]]";
     let mut t = TokenIterator::new(input);
     let step = parse_step(&mut t).unwrap();
-    assert_eq!(step, Step::Dialogue("this is dialogue".to_string(),
-                                    vec![
-                                        Choice::external(
-                                            "this is a choice".to_string(),
-                                            NodeName("targetnode".to_string()),
-                                        ),
-                                        Choice::external(
-                                            "this is another choice".to_string(),
-                                            NodeName("targetnode2".to_string()),
-                                        )
-                                    ]));
+    assert_eq!(
+        step,
+        Step::Dialogue(
+            "this is dialogue".to_string(),
+            vec![
+                Choice::external(
+                    "this is a choice".to_string(),
+                    NodeName("targetnode".to_string()),
+                ),
+                Choice::external(
+                    "this is another choice".to_string(),
+                    NodeName("targetnode2".to_string()),
+                )
+            ]
+        )
+    );
 }
 
 #[test]
@@ -122,14 +133,13 @@ fn parse_conditional_dialogue() {
         Expr::Term(Term::Boolean(true)),
         vec![Step::Dialogue(
             "this is dialogue".to_string(),
-            vec![
-                Choice::external(
-                    "this is a choice".to_string(),
-                    NodeName("targetnode".to_string()),
-                )
-            ])],
+            vec![Choice::external(
+                "this is a choice".to_string(),
+                NodeName("targetnode".to_string()),
+            )],
+        )],
         vec![],
-        vec![]
+        vec![],
     );
     assert_eq!(step, expected);
 }
@@ -152,14 +162,16 @@ this is other dialogue
             vec![Choice::external(
                 "this is a choice".to_string(),
                 NodeName("targetnode".to_string()),
-            )])],
+            )],
+        )],
         vec![],
         vec![Step::Dialogue(
             "this is other dialogue".to_string(),
             vec![Choice::external(
                 "this is another choice".to_string(),
                 NodeName("targetnode2".to_string()),
-            )])]
+            )],
+        )],
     );
     assert_eq!(step, expected);
 }
@@ -187,29 +199,31 @@ whatever
             vec![Choice::external(
                 "this is a choice".to_string(),
                 NodeName("targetnode".to_string()),
-            )])
-        ],
-        vec![(Expr::Term(Term::Boolean(false)),
-              vec![Step::Dialogue(
-                  "this is other dialogue".to_string(),
-                  vec![Choice::external(
-                      "this is another choice".to_string(),
-                      NodeName("targetnode2".to_string()),
-                  )])
-              ]),
-             (Expr::Term(Term::Boolean(true)),
-              vec![Step::Dialogue(
-                  "third dialogue!".to_string(),
-                  vec![])
-              ])
+            )],
+        )],
+        vec![
+            (
+                Expr::Term(Term::Boolean(false)),
+                vec![Step::Dialogue(
+                    "this is other dialogue".to_string(),
+                    vec![Choice::external(
+                        "this is another choice".to_string(),
+                        NodeName("targetnode2".to_string()),
+                    )],
+                )],
+            ),
+            (
+                Expr::Term(Term::Boolean(true)),
+                vec![Step::Dialogue("third dialogue!".to_string(), vec![])],
+            ),
         ],
         vec![Step::Dialogue(
             "whatever".to_string(),
             vec![Choice::external(
                 "look a choice".to_string(),
                 NodeName("targetnode3".to_string()),
-            )])
-        ]
+            )],
+        )],
     );
     assert_eq!(step, expected);
 }
@@ -315,18 +329,13 @@ dialogue
         Node {
             title: NodeName("title!".to_string()),
             extra: extra2,
-            steps: vec![
-                Step::Dialogue("dialogue".to_string(), vec![
-                    Choice::external(
-                        "option".to_string(),
-                        NodeName("whee hello".to_string()),
-                    ),
-                    Choice::external(
-                        "option2".to_string(),
-                        NodeName("title!".to_string()),
-                    ),
-                ]),
-            ],
+            steps: vec![Step::Dialogue(
+                "dialogue".to_string(),
+                vec![
+                    Choice::external("option".to_string(), NodeName("whee hello".to_string())),
+                    Choice::external("option2".to_string(), NodeName("title!".to_string())),
+                ],
+            )],
             visited: false,
         },
     ];
@@ -346,34 +355,49 @@ fn parse_number_expression() {
 fn parse_string_expression() {
     let input = "\"hi there\"";
     let mut t = TokenIterator::new(input);
-    assert_eq!(parse_expr(&mut t).unwrap(), Expr::Term(Term::String("hi there".to_string())));
+    assert_eq!(
+        parse_expr(&mut t).unwrap(),
+        Expr::Term(Term::String("hi there".to_string()))
+    );
 }
 
 #[test]
 fn parse_function_expression() {
     let input = "visited(\"someNode\")";
     let mut t = TokenIterator::new(input);
-    assert_eq!(parse_expr(&mut t).unwrap(),
-               Expr::Term(Term::Function("visited".to_string(),
-                                         vec![Expr::Term(Term::String("someNode".to_string()))])));
+    assert_eq!(
+        parse_expr(&mut t).unwrap(),
+        Expr::Term(Term::Function(
+            "visited".to_string(),
+            vec![Expr::Term(Term::String("someNode".to_string()))]
+        ))
+    );
 }
 
 #[test]
 fn parse_function_expression_no_args() {
     let input = "visited()";
     let mut t = TokenIterator::new(input);
-    assert_eq!(parse_expr(&mut t).unwrap(),
-               Expr::Term(Term::Function("visited".to_string(), vec![])));
+    assert_eq!(
+        parse_expr(&mut t).unwrap(),
+        Expr::Term(Term::Function("visited".to_string(), vec![]))
+    );
 }
 
 #[test]
 fn parse_function_expression_two_args() {
     let input = "visited(\"someNode\", 5.4)";
     let mut t = TokenIterator::new(input);
-    assert_eq!(parse_expr(&mut t).unwrap(),
-               Expr::Term(Term::Function("visited".to_string(),
-                                         vec![Expr::Term(Term::String("someNode".to_string())),
-                                              Expr::Term(Term::Number(5.4))])));
+    assert_eq!(
+        parse_expr(&mut t).unwrap(),
+        Expr::Term(Term::Function(
+            "visited".to_string(),
+            vec![
+                Expr::Term(Term::String("someNode".to_string())),
+                Expr::Term(Term::Number(5.4))
+            ]
+        ))
+    );
 }
 
 #[test]
@@ -388,9 +412,11 @@ fn parse_negative_number_expression() {
 fn parse_addition() {
     let input = "4 + 8";
     let mut t = TokenIterator::new(input);
-    let expected = Expr::Binary(BinaryOp::Plus,
-                                Box::new(Expr::Term(Term::Number(4.0))),
-                                Box::new(Expr::Term(Term::Number(8.0))));
+    let expected = Expr::Binary(
+        BinaryOp::Plus,
+        Box::new(Expr::Term(Term::Number(4.0))),
+        Box::new(Expr::Term(Term::Number(8.0))),
+    );
     assert_eq!(parse_expr(&mut t).unwrap(), expected);
 }
 
@@ -398,10 +424,11 @@ fn parse_addition() {
 fn parse_parentheses() {
     let input = "(4 + 8)";
     let mut t = TokenIterator::new(input);
-    let expected = Expr::Parentheses(
-        Box::new(Expr::Binary(BinaryOp::Plus,
-                              Box::new(Expr::Term(Term::Number(4.0))),
-                              Box::new(Expr::Term(Term::Number(8.0))))));
+    let expected = Expr::Parentheses(Box::new(Expr::Binary(
+        BinaryOp::Plus,
+        Box::new(Expr::Term(Term::Number(4.0))),
+        Box::new(Expr::Term(Term::Number(8.0))),
+    )));
     assert_eq!(parse_expr(&mut t).unwrap(), expected);
 }
 
@@ -418,8 +445,13 @@ fn parse_inline_option_with_condition() {
     let input = "-> This is some text << if $money >= 5 >>";
     let mut t = TokenIterator::new(input);
     let (_indent, line) = parse_line(&mut t).unwrap();
-    assert_eq!(line, Line::InlineOption("This is some text".to_string(),
-                                        Some("$money >= 5".to_string())));
+    assert_eq!(
+        line,
+        Line::InlineOption(
+            "This is some text".to_string(),
+            Some("$money >= 5".to_string())
+        )
+    );
 }
 
 #[test]
@@ -433,54 +465,33 @@ fn parse_inline_option_with_condition2() {
 "#;
     let mut t = TokenIterator::new(input);
     let step = parse_step(&mut t).unwrap();
-    assert_eq!(step,Step::Dialogue("This is dialogue".to_string(),
-                                   vec![
-                                       Choice::inline("This is some text".to_string(),
-                                                      vec![
-                                                          Step::Dialogue("Some inline dialogue".to_string(),
-                                                                         vec![]),
-                                                          Step::Dialogue("Some more inline dialogue".to_string(),
-                                                                         vec![]),
-                                                      ],
-                                                      Some(Expr::Binary(BinaryOp::GreaterThanEqual,
-                                                                        Box::new(Expr::Term(Term::Variable(VariableName("money".to_string())))),
-                                                                        Box::new(Expr::Term(Term::Number(5.0)))))),
-                                       Choice::inline("Another text".to_string(),
-                                                      vec![
-                                                          Step::Dialogue("Some inline dialogue".to_string(),
-                                                                         vec![]),
-                                                      ],
-                                                      None),
-                                   ]));
-}
-
-#[derive(PartialEq, Debug)]
-enum Event {
-    Say(String),
-    Choose(String, Vec<String>),
-    Command(String),
-    End,
-}
-
-#[derive(Default)]
-struct TestHandler {
-    events: Rc<RefCell<Vec<Event>>>,
-}
-
-impl YarnHandler for TestHandler {
-    fn say(&mut self, text: String) {
-        self.events.borrow_mut().push(Event::Say(text));
-    }
-    fn choose(&mut self, text: String, choices: Vec<String>) {
-        self.events.borrow_mut().push(Event::Choose(text, choices));
-    }
-    fn command(&mut self, action: String) -> Result<(), ()> {
-        self.events.borrow_mut().push(Event::Command(action));
-        Ok(())
-    }
-    fn end_conversation(&mut self) {
-        self.events.borrow_mut().push(Event::End);
-    }
+    assert_eq!(
+        step,
+        Step::Dialogue(
+            "This is dialogue".to_string(),
+            vec![
+                Choice::inline(
+                    "This is some text".to_string(),
+                    vec![
+                        Step::Dialogue("Some inline dialogue".to_string(), vec![]),
+                        Step::Dialogue("Some more inline dialogue".to_string(), vec![]),
+                    ],
+                    Some(Expr::Binary(
+                        BinaryOp::GreaterThanEqual,
+                        Box::new(Expr::Term(Term::Variable(VariableName(
+                            "money".to_string()
+                        )))),
+                        Box::new(Expr::Term(Term::Number(5.0)))
+                    ))
+                ),
+                Choice::inline(
+                    "Another text".to_string(),
+                    vec![Step::Dialogue("Some inline dialogue".to_string(), vec![]),],
+                    None
+                ),
+            ]
+        )
+    );
 }
 
 #[test]
@@ -492,19 +503,20 @@ text1
 text2
 ===
 "#;
-    let handler = Box::new(TestHandler::default());
-    let events = handler.events.clone();
-    let mut engine = YarnEngine::new(handler);
+    // let handler = TestHandler::default();
+    // let events = handler.events.clone();
+    let mut engine = YarnEngine::new();
     engine.load_from_string(&nodes).unwrap();
+
     engine.activate(NodeName("1".to_string()));
-    assert_eq!(&*events.borrow(), &[Event::Say("text1".to_string())]);
-    engine.proceed();
-    assert_eq!(&*events.borrow(), &[Event::Say("text1".to_string()),
-                                    Event::Say("text2".to_string())]);
-    engine.proceed();
-    assert_eq!(&*events.borrow(), &[Event::Say("text1".to_string()),
-                                    Event::Say("text2".to_string()),
-                                    Event::End]);
+
+    // let f = engine.collect::<Vec<_>>();
+
+    // print!("{:?}", f);
+    assert_eq!(engine.next(), Some(YarnEntry::Say("text1".to_string())));
+    assert_eq!(engine.next(), Some(YarnEntry::Say("text2".to_string())));
+    assert_eq!(engine.next(), Some(YarnEntry::EndConversation));
+    assert_eq!(engine.next(), None);
 }
 
 #[test]
@@ -527,25 +539,35 @@ title: 3
 that's all
 ===
 "#;
-    let handler = Box::new(TestHandler::default());
-    let events = handler.events.clone();
-    let mut engine = YarnEngine::new(handler);
+    // let events = handler.events.clone();
+    let mut engine = YarnEngine::new();
     engine.load_from_string(&nodes).unwrap();
     engine.activate(NodeName("1".to_string()));
-    assert_eq!(&*events.borrow(), &[Event::Choose("some text".to_string(),
-                                                  vec!["whee".to_string(),
-                                                       "whee2".to_string()])]);
-    events.borrow_mut().clear();
+
+    assert_eq!(
+        engine.next(),
+        Some(YarnEntry::Choose {
+            text: "some text".to_string(),
+            choices: vec!["whee".to_string(), "whee2".to_string()]
+        })
+    );
+
     engine.choose(1);
-    assert_eq!(&*events.borrow(), &[Event::Choose("some text".to_string(),
-                                                  vec!["whee".to_string(),
-                                                       "whee2".to_string()])]);
-    events.borrow_mut().clear();
+    assert_eq!(
+        engine.next(),
+        Some(YarnEntry::Choose {
+            text: "some text".to_string(),
+            choices: vec!["whee".to_string(), "whee2".to_string()]
+        })
+    );
     engine.choose(0);
-    assert_eq!(&*events.borrow(), &[Event::Say("that's all".to_string())]);
-    events.borrow_mut().clear();
-    engine.proceed();
-    assert_eq!(&*events.borrow(), &[Event::End]);
+
+    assert_eq!(
+        engine.next(),
+        Some(YarnEntry::Say("that's all".to_string()))
+    );
+    assert_eq!(engine.next(), Some(YarnEntry::EndConversation));
+    assert_eq!(engine.next(), None);
 }
 
 #[test]
@@ -560,22 +582,24 @@ other text
 <<endif>>
 ===
 "#;
-    let handler = Box::new(TestHandler::default());
-    let events = handler.events.clone();
-    let mut engine = YarnEngine::new(handler);
+    // let handler = TestHandler::default();
+    // let events = handler.events.clone();
+    let mut engine = YarnEngine::new();
     engine.set_variable(VariableName("foo".to_string()), Value::Number(5.0));
     engine.load_from_string(&nodes).unwrap();
     engine.activate(NodeName("1".to_string()));
-    assert_eq!(&*events.borrow(), &[Event::Say("some text".to_string())]);
-    events.borrow_mut().clear();
-    engine.proceed();
-    assert_eq!(&*events.borrow(), &[Event::End]);
-    events.borrow_mut().clear();
+
+    assert_eq!(engine.next(), Some(YarnEntry::Say("some text".to_string())));
+    assert_eq!(engine.next(), Some(YarnEntry::EndConversation));
+    assert_eq!(engine.next(), None);
 
     engine.set_variable(VariableName("foo".to_string()), Value::Number(6.0));
     engine.activate(NodeName("1".to_string()));
-    assert_eq!(&*events.borrow(), &[Event::Say("other text".to_string())]);
-    events.borrow_mut().clear();
-    engine.proceed();
-    assert_eq!(&*events.borrow(), &[Event::End]);
+
+    assert_eq!(
+        engine.next(),
+        Some(YarnEntry::Say("other text".to_string()))
+    );
+    assert_eq!(engine.next(), Some(YarnEntry::EndConversation));
+    assert_eq!(engine.next(), None);
 }

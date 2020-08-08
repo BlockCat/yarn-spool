@@ -1,4 +1,4 @@
-use engine::{Expr, Step, Choice, Term, Node, NodeName, VariableName, BinaryOp, UnaryOp};
+use crate::engine::{BinaryOp, Choice, Expr, Node, NodeName, Step, Term, UnaryOp, VariableName};
 use std::collections::HashMap;
 
 pub(crate) fn parse_expr(tokenizer: &mut TokenIterator) -> Result<Expr, ()> {
@@ -13,12 +13,8 @@ pub(crate) fn parse_expr(tokenizer: &mut TokenIterator) -> Result<Expr, ()> {
             let expr = parse_expr(tokenizer)?;
             Expr::Unary(UnaryOp::Not, Box::new(expr))
         }
-        Token::Word(ref w) if w == "true" => {
-            Expr::Term(Term::Boolean(true))
-        }
-        Token::Word(ref w) if w == "false" => {
-            Expr::Term(Term::Boolean(false))
-        }
+        Token::Word(ref w) if w == "true" => Expr::Term(Term::Boolean(true)),
+        Token::Word(ref w) if w == "false" => Expr::Term(Term::Boolean(false)),
         Token::Word(ref w) => {
             println!("function? {}", w);
             match tokenizer.next().ok_or(())? {
@@ -44,9 +40,7 @@ pub(crate) fn parse_expr(tokenizer: &mut TokenIterator) -> Result<Expr, ()> {
             println!("function with {} args", args.len());
             Expr::Term(Term::Function(w.to_string(), args))
         }
-        Token::Quote => {
-            Expr::Term(Term::String(parse_string_until(tokenizer, '"')?))
-        }
+        Token::Quote => Expr::Term(Term::String(parse_string_until(tokenizer, '"')?)),
         Token::Minus => {
             let expr = parse_expr(tokenizer)?;
             Expr::Unary(UnaryOp::Negate, Box::new(expr))
@@ -58,9 +52,7 @@ pub(crate) fn parse_expr(tokenizer: &mut TokenIterator) -> Result<Expr, ()> {
             };
             Expr::Term(Term::Variable(VariableName(name)))
         }
-        Token::LeftParenthesis => {
-            Expr::Parentheses(Box::new(parse_expr(tokenizer)?))
-        }
+        Token::LeftParenthesis => Expr::Parentheses(Box::new(parse_expr(tokenizer)?)),
         _ => return Err(()),
     };
     match tokenizer.peek() {
@@ -101,19 +93,17 @@ pub(crate) fn parse_expr(tokenizer: &mut TokenIterator) -> Result<Expr, ()> {
                 BinaryOp::GreaterThan
             }
         }
-        Token::Word(word) => {
-            match &*word {
-                "and" => BinaryOp::And,
-                "or" => BinaryOp::Or,
-                "eq" | "is" => BinaryOp::Equals,
-                "neq" => BinaryOp::NotEquals,
-                "le" => BinaryOp::LessThan,
-                "leq" => BinaryOp::LessThanEqual,
-                "gt" => BinaryOp::GreaterThan,
-                "geq" => BinaryOp::GreaterThanEqual,
-                _ => return Err(()),
-            }
-        }
+        Token::Word(word) => match &*word {
+            "and" => BinaryOp::And,
+            "or" => BinaryOp::Or,
+            "eq" | "is" => BinaryOp::Equals,
+            "neq" => BinaryOp::NotEquals,
+            "le" => BinaryOp::LessThan,
+            "leq" => BinaryOp::LessThanEqual,
+            "gt" => BinaryOp::GreaterThan,
+            "geq" => BinaryOp::GreaterThanEqual,
+            _ => return Err(()),
+        },
         _ => return Err(()),
     };
     let right = parse_expr(tokenizer)?;
@@ -179,7 +169,10 @@ fn do_parse_line(token: Token, tokenizer: &mut TokenIterator) -> Result<Line, ()
             let first = parts.next().unwrap();
             let second = parts.next();
             if let Some(second) = second {
-                return Ok(Line::Option(Some(first.to_string()), NodeName(second.to_string())));
+                return Ok(Line::Option(
+                    Some(first.to_string()),
+                    NodeName(second.to_string()),
+                ));
             }
             return Ok(Line::Option(None, NodeName(first.to_string())));
         }
@@ -195,7 +188,10 @@ fn do_parse_line(token: Token, tokenizer: &mut TokenIterator) -> Result<Line, ()
                         return Err(());
                     }
                     let end = remainder.find(">>").ok_or(())?;
-                    (rest[..idx].trim().to_string(), Some(remainder[3..end].trim().to_string()))
+                    (
+                        rest[..idx].trim().to_string(),
+                        Some(remainder[3..end].trim().to_string()),
+                    )
                 }
                 None => (rest.trim().to_string(), None),
             };
@@ -222,7 +218,10 @@ enum DialogueOption {
     External(String, NodeName),
 }
 
-fn try_parse_option(tokenizer: &mut TokenIterator, indent: u32) -> Result<Option<DialogueOption>, ()> {
+fn try_parse_option(
+    tokenizer: &mut TokenIterator,
+    indent: u32,
+) -> Result<Option<DialogueOption>, ()> {
     let t = match tokenizer.peek() {
         Some(t) => t,
         None => return Ok(None),
@@ -287,7 +286,9 @@ fn parse_conditional(tokenizer: &mut TokenIterator, indent: u32) -> Result<Condi
                 let step = parse_toplevel_line(tokenizer, l, indent)?;
                 let steps = match phase {
                     ConditionalParsePhase::If => &mut parts.if_steps,
-                    ConditionalParsePhase::ElseIf => &mut parts.else_ifs.iter_mut().last().unwrap().1,
+                    ConditionalParsePhase::ElseIf => {
+                        &mut parts.else_ifs.iter_mut().last().unwrap().1
+                    }
                     ConditionalParsePhase::Else => &mut parts.else_steps,
                 };
                 steps.push(step);
@@ -306,7 +307,7 @@ fn parse_toplevel_line(tokenizer: &mut TokenIterator, line: Line, indent: u32) -
                 println!("found opt {:?} with indent {}", opt, indent);
                 match opt {
                     Some(DialogueOption::Inline(text, condition)) => {
-                        println!("peeking after inline opt: {:?}" ,tokenizer.peek());
+                        println!("peeking after inline opt: {:?}", tokenizer.peek());
                         let this_indent = tokenizer.last_indent();
                         println!("this indent: {}", this_indent);
                         let mut steps = vec![];
@@ -337,10 +338,12 @@ fn parse_toplevel_line(tokenizer: &mut TokenIterator, line: Line, indent: u32) -
             let mut expr_tokenizer = TokenIterator::new(&s);
             let expr = parse_expr(&mut expr_tokenizer)?;
             let parts = parse_conditional(tokenizer, indent)?;
-            return Ok(Step::Conditional(expr,
-                                        parts.if_steps,
-                                        parts.else_ifs,
-                                        parts.else_steps));
+            return Ok(Step::Conditional(
+                expr,
+                parts.if_steps,
+                parts.else_ifs,
+                parts.else_steps,
+            ));
         }
         Line::Action(s) => {
             if s.starts_with("set ") {
@@ -356,12 +359,9 @@ fn parse_toplevel_line(tokenizer: &mut TokenIterator, line: Line, indent: u32) -
         Line::Option(None, name) => {
             return Ok(Step::Jump(name));
         }
-        Line::EndIf |
-        Line::ElseIf(_) |
-        Line::Else |
-        Line::Option(..) |
-        Line::InlineOption(..) =>
+        Line::EndIf | Line::ElseIf(_) | Line::Else | Line::Option(..) | Line::InlineOption(..) => {
             return Err(())
+        }
     }
 }
 
@@ -407,7 +407,8 @@ pub(crate) fn parse_node(tokenizer: &mut TokenIterator) -> Result<Node, ()> {
                     }
                     node.title.0 = value.trim().to_string();
                 } else {
-                    node.extra.insert(name[..name.len()-1].to_string(), value.trim().to_string());
+                    node.extra
+                        .insert(name[..name.len() - 1].to_string(), value.trim().to_string());
                 }
             }
             Token::Minus => {
@@ -461,7 +462,7 @@ pub(crate) enum Token {
 }
 
 pub(crate) struct TokenIterator<'a> {
-    input: Box<Iterator<Item=char> + 'a>,
+    input: Box<dyn Iterator<Item = char> + 'a>,
     last_char: Option<char>,
     last_indent: u32,
     start_of_line: bool,
@@ -552,12 +553,12 @@ impl<'a> Iterator for TokenIterator<'a> {
                 ',' => return Some(Token::Comma),
                 '[' => return Some(Token::LeftBracket),
                 ']' => return Some(Token::RightBracket),
-                '0'...'9' => {
+                '0'..='9' => {
                     buffer.push(ch);
                     let mut before_decimal = true;
                     while let Some(ch) = self.next_char() {
                         match ch {
-                            '0'...'9' => buffer.push(ch),
+                            '0'..='9' => buffer.push(ch),
                             '.' if before_decimal => {
                                 before_decimal = false;
                                 buffer.push(ch);

@@ -7,9 +7,13 @@ readme = "README.md"
 description = "A library for parsing and evaluating Yarn Dialogue scripts."
 repository = "https://github.com/jdm/yarn-spool"
 documentation = "https://docs.rs/yarn-spool"
+edition = "2018"
 
 [badges]
 travis-ci = { repository = "jdm/yarn-spool", branch = "master" }
+
+[dependencies]
+send_wrapper = "0.4.0"
 
 [dev_dependencies]
 easycurses = "0.10.0"

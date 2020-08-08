@@ -2,14 +2,14 @@ extern crate easycurses;
 extern crate yarn_spool;
 
 use easycurses::*;
-use yarn_spool::{YarnEngine, YarnHandler, NodeName};
-use std::cell::{RefCell, Cell};
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::iter::repeat;
 use std::rc::Rc;
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::Instant;
+use yarn_spool::{NodeName, YarnEngine, YarnEntry};
 
 #[derive(PartialEq)]
 enum Phase {
@@ -22,26 +22,26 @@ struct GameState {
     draw_button: (Cell<Instant>, Cell<bool>),
 }
 
-struct Handler {
+/*struct Handler {
     state: Rc<GameState>,
 }
 
 impl YarnHandler for Handler {
-    fn say(&mut self, text: String) {
+    type Data = ();
+    fn say(&mut self, text: String, _: Option<&mut Self::Data>) {
         *self.state.phase.borrow_mut() = Phase::Dialogue(text);
     }
 
-    fn choose(&mut self, _text: String, _choices: Vec<String>) {
-    }
+    fn choose(&mut self, _text: String, _choices: Vec<String>, _: Option<&mut Self::Data>) {}
 
-    fn command(&mut self, _action: String) -> Result<(), ()> {
+    fn command(&mut self, _action: String, _: Option<&mut Self::Data>) -> Result<(), ()> {
         Ok(())
     }
 
-    fn end_conversation(&mut self) {
+    fn end_conversation(&mut self, _: Option<&mut Self::Data>) {
         *self.state.phase.borrow_mut() = Phase::Game;
     }
-}
+}*/
 
 fn main() {
     // Normal setup
@@ -57,8 +57,8 @@ fn main() {
         phase: RefCell::new(Phase::Game),
         draw_button: (Cell::new(Instant::now()), Cell::new(false)),
     });
-    let handler = Handler { state: state.clone() };
-    let mut engine = YarnEngine::new(Box::new(handler));
+
+    let mut engine = YarnEngine::new();
 
     let buffer = fs::read_to_string("examples/simple.yarn").unwrap();
     engine.load_from_string(&buffer).unwrap();
@@ -66,7 +66,9 @@ fn main() {
     // We need to know how wide our screen is.
     let (row_count, col_count) = easy.get_row_col_count();
 
-    let frame_target_duration = Duration::new(1, 0).checked_div(60).expect("failed when rhs!=0, what?");
+    let frame_target_duration = Duration::new(1, 0)
+        .checked_div(60)
+        .expect("failed when rhs!=0, what?");
 
     let (mut x, mut y) = (col_count / 2, row_count / 2);
     let (dwarf_x, dwarf_y): (i32, i32) = (x - 5, y - 3);
@@ -82,7 +84,7 @@ fn main() {
                     Input::KeyRight => (1, 0),
                     Input::KeyDown => (0, -1),
                     Input::KeyUp => (0, 1),
-                    _ => (0, 0)
+                    _ => (0, 0),
                 };
                 if xdiff != 0 || ydiff != 0 {
                     if x + xdiff == dwarf_x && y + ydiff == dwarf_y {
@@ -94,7 +96,15 @@ fn main() {
                 }
             } else {
                 if input == Input::Character('x') {
-                    engine.proceed();
+                    if let Some(entry) = engine.next() {
+                        match entry {
+                            YarnEntry::Say(s) => *state.phase.borrow_mut() = Phase::Dialogue(s),
+                            _ => {}
+                        }
+                    } else {
+                        *state.phase.borrow_mut() = Phase::Game;
+                    }
+                    // engine.proceed(None);
                 }
             }
         }
@@ -121,7 +131,7 @@ fn main() {
 
         if let &Phase::Dialogue(ref s) = &*state.phase.borrow() {
             let mut draw_y = 4;
-            let mut draw_x = col_count / 3;
+            let draw_x = col_count / 3;
             easy.move_xy(draw_x, draw_y);
             let border: String = repeat('#').take(col_count as usize / 3).collect();
             easy.print(&border);
@@ -137,7 +147,7 @@ fn main() {
             draw_y -= 1;
             easy.move_xy(draw_x, draw_y);
             easy.print_char('#');
-            easy.move_xy(draw_x * 2  - 5, draw_y);
+            easy.move_xy(draw_x * 2 - 5, draw_y);
             if state.draw_button.1.get() {
                 easy.print("(x)");
             } else {
