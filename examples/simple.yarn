@@ -1,5 +1,26 @@
 title: dwarf
+tags: 
+colorID: 0
+position: -1303,-3060
 ---
 Dwarf: What do you think you're doing?
 You: Oh, sorry. I didn't see you there.
+Dwarf: Are you saying I'm short?
+[[ yes: |dwarf.yes]]
+[[ no: |dwarf.no]]
+===
+title: dwarf.yes
+tags: 
+colorID: 0
+position: -1651,-2768
+---
+You died.
+===
+title: dwarf.no
+tags: 
+colorID: 0
+position: -1201,-2811
+---
+Dwarf: You know it. 
+Dwarf: Now get lost.
 ===

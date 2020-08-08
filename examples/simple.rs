@@ -86,25 +86,70 @@ fn main() {
                     Input::KeyUp => (0, 1),
                     _ => (0, 0),
                 };
+
+                // if input == Input::Character('q') {
+                //     engine.activate(NodeName("dwarf".to_string()));
+                // }
                 if xdiff != 0 || ydiff != 0 {
                     if x + xdiff == dwarf_x && y + ydiff == dwarf_y {
                         engine.activate(NodeName("dwarf".to_string()));
+                        if let Some(entry) = engine.next() {
+                            match entry {
+                                YarnEntry::Say(s) => *state.phase.borrow_mut() = Phase::Dialogue(s),
+                                _ => {}
+                            }
+                        } else {
+                            *state.phase.borrow_mut() = Phase::Game;
+                        }
                     } else {
                         x = (x + xdiff).max(0).min(col_count - 1);
                         y = (y + ydiff).max(0).min(row_count - 1);
                     }
                 }
             } else {
+                if input == Input::Character('1') {
+                    engine.choose(0).unwrap();
+                    if let Some(entry) = engine.next() {
+                        match entry {
+                            YarnEntry::Say(s) => *state.phase.borrow_mut() = Phase::Dialogue(s),
+                            YarnEntry::Choose { text, choices } => {
+                                *state.phase.borrow_mut() = Phase::Dialogue(text)
+                            }
+                            YarnEntry::EndConversation => {
+                                *state.phase.borrow_mut() = Phase::Game
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if input == Input::Character('2') {
+                    engine.choose(1).unwrap();
+                    if let Some(entry) = engine.next() {
+                        match entry {
+                            YarnEntry::Say(s) => *state.phase.borrow_mut() = Phase::Dialogue(s),
+                            YarnEntry::Choose { text, choices } => {
+                                *state.phase.borrow_mut() = Phase::Dialogue(text)
+                            }
+                            YarnEntry::EndConversation => {
+                                *state.phase.borrow_mut() = Phase::Game
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 if input == Input::Character('x') {
                     if let Some(entry) = engine.next() {
                         match entry {
                             YarnEntry::Say(s) => *state.phase.borrow_mut() = Phase::Dialogue(s),
+                            YarnEntry::Choose { text, choices } => {
+                                *state.phase.borrow_mut() = Phase::Dialogue(text)
+                            }
+                            YarnEntry::EndConversation => {
+                                *state.phase.borrow_mut() = Phase::Game
+                            }
                             _ => {}
                         }
-                    } else {
-                        *state.phase.borrow_mut() = Phase::Game;
                     }
-                    // engine.proceed(None);
                 }
             }
         }

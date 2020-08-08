@@ -118,10 +118,6 @@ impl Conversation {
             indexes: vec![],
         }
     }
-
-    fn reset(&mut self, name: NodeName) {
-        *self = Conversation::new(name);
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -356,11 +352,25 @@ struct NodeState {
 }
 
 impl NodeState {
-    fn take_conversation(&mut self) -> Conversation {
-        self.conversation.take().expect("missing conversation")
+    fn set_conversation(&mut self, conversation: Option<NodeName>) {
+        self.conversation = conversation.map(|x| Conversation::new(x));
     }
 
-    fn get_current_step(&self, conversation: &Conversation) -> (&Vec<Step>, usize) {
+    fn push_step(&mut self, index: StepIndex) {
+        self.conversation.as_mut().unwrap().indexes.push(index);
+    }
+    fn advance(&mut self) {
+        let conversation = self.conversation.as_mut().unwrap();
+        match conversation.indexes.last_mut() {
+            Some(index) => index.advance(),
+            None => conversation.base_index += 1,
+        }
+    }
+    fn get_current_step(&self) -> Option<&Step> {
+        let conversation = self
+            .conversation
+            .as_ref()
+            .expect("No active conversation found");
         let mut steps = {
             let current = self.nodes.0.get(&conversation.node).expect("missing node");
             &current.steps
@@ -398,7 +408,7 @@ impl NodeState {
             }
         }
 
-        (steps, current_step_index)
+        steps.get(current_step_index)
     }
 }
 
@@ -474,24 +484,26 @@ impl YarnEngine {
 
     /// Make a choice between a series of options for the current Yarn node's active step.
     /// Execution will resume immediately based on the choice provided.
-    pub fn choose(&mut self, choice: usize) {
-        let conversation = {
-            let mut conversation = self.state.take_conversation();
-            let (steps, current_step_index) = self.state.get_current_step(&conversation);
-            match steps[current_step_index] {
-                Step::Dialogue(_, ref choices) => match choices[choice].kind {
-                    ChoiceKind::External(ref node) => conversation.reset((*node).clone()),
-                    ChoiceKind::Inline(..) => {
-                        conversation.indexes.push(StepIndex::Dialogue(choice, 0));
-                    }
-                },
-                Step::Command(..) | Step::Assign(..) | Step::Conditional(..) | Step::Jump(..) => {
-                    unreachable!()
+    pub fn choose(&mut self, choice: usize) -> Result<(), ()> {
+        let step = self.state.get_current_step();
+        match step {
+            Some(Step::Dialogue(_, ref choices)) => match choices[choice].kind {
+                ChoiceKind::External(ref node) => {
+                    let node = node.clone();
+                    self.state.set_conversation(Some(node));
+                    Ok(())
                 }
-            }
-            conversation
-        };
-        self.state.conversation = Some(conversation);
+                ChoiceKind::Inline(..) => {
+                    self.state.push_step(StepIndex::Dialogue(choice, 0));
+                    Ok(())
+                }
+            },
+            None => Ok(()),
+            Some(Step::Command(..))
+            | Some(Step::Assign(..))
+            | Some(Step::Conditional(..))
+            | Some(Step::Jump(..)) => unreachable!(),
+        }
     }
 }
 
@@ -533,63 +545,48 @@ impl<'a> Iterator for YarnEngine {
             if self.state.conversation.is_none() {
                 return None;
             }
-            let mut conversation = self.state.take_conversation();
-            let (steps, current_step_index) = self.state.get_current_step(&conversation);
-
             if self.conversion_ended {
                 return None;
-            } else if current_step_index >= steps.len() {
+            }
+            let step = self.state.get_current_step();
+            if step.is_none() {
                 self.conversion_ended = true;
                 return Some(YarnEntry::EndConversation);
             }
 
-            let advance = |conversation: &mut Conversation| match conversation.indexes.last_mut() {
-                Some(index) => index.advance(),
-                None => conversation.base_index += 1,
-            };
-            if current_step_index >= steps.len() {
-                return None;
-            }
-
-            let result = match steps[current_step_index] {
-                Step::Dialogue(ref text, ref choices) => {
+            match step.unwrap() {
+                Step::Dialogue(text, choices) => {
                     if choices.is_empty() {
-                        advance(&mut conversation);
-                        // (true, ExecutionStatus::Halt)
-                        (false, Some(YarnEntry::Say(text.clone())))
+                        let text = text.clone();
+                        self.state.advance();
+                        return Some(YarnEntry::Say(text));
                     } else {
-                        (
-                            false,
-                            Some(YarnEntry::Choose {
-                                text: text.clone(),
-                                choices: choices.iter().map(|c| c.text.clone()).collect(),
-                            }),
-                        )
+                        return Some(YarnEntry::Choose {
+                            text: text.clone(),
+                            choices: choices.iter().map(|c| c.text.clone()).collect(),
+                        });
                     }
                 }
-                Step::Command(ref command) => {
-                    advance(&mut conversation);
-                    (
-                        false,
-                        Some(YarnEntry::Command {
-                            action: command.clone(),
-                        }),
-                    )
+                Step::Command(command) => {
+                    let command = command.clone();
+                    self.state.advance();
+                    return Some(YarnEntry::Command {
+                        action: command,
+                    });
                 }
-                Step::Assign(ref name, ref expr) => {
+                Step::Assign(name, expr) => {
                     let value = self.engine_state.evaluate(expr, &self.state.nodes).unwrap();
                     self.engine_state.variables.set((*name).clone(), value);
-                    advance(&mut conversation);
-                    (true, None)
+                    self.state.advance();
                 }
-                Step::Jump(ref name) => {
-                    conversation.reset((*name).clone());
-                    (true, None)
+                Step::Jump(name) => {
+                    let name = name.clone();
+                    self.state.set_conversation(Some(name));
                 }
-                Step::Conditional(ref expr, ref _if_steps, ref else_ifs, ref _else_steps) => {
+                Step::Conditional(expr, _if_steps, else_ifs, _else_steps) => {
                     let value = self.engine_state.evaluate(expr, &self.state.nodes).unwrap();
                     if value.as_bool() {
-                        conversation.indexes.push(StepIndex::If(0));
+                        self.state.push_step(StepIndex::If(0));
                     } else {
                         let mut matched = false;
                         for (else_if_index, else_ifs) in else_ifs.iter().enumerate() {
@@ -598,25 +595,16 @@ impl<'a> Iterator for YarnEngine {
                                 .evaluate(&else_ifs.0, &self.state.nodes)
                                 .unwrap();
                             if value.as_bool() {
-                                conversation
-                                    .indexes
-                                    .push(StepIndex::ElseIf(else_if_index, 0));
+                                self.state.push_step(StepIndex::ElseIf(else_if_index, 0));
                                 matched = true;
                                 break;
                             }
                         }
                         if !matched {
-                            conversation.indexes.push(StepIndex::Else(0));
+                            self.state.push_step(StepIndex::Else(0));
                         }
                     }
-                    (true, None)
                 }
-            };
-
-            self.state.conversation = Some(conversation);
-
-            if !result.0 {
-                return result.1;
             }
         }
     }

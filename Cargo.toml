@@ -17,3 +17,6 @@ send_wrapper = "0.4.0"
 
 [dev_dependencies]
 easycurses = "0.10.0"
+
+[features]
+debug = []
